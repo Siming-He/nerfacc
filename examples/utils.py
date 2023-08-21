@@ -12,7 +12,7 @@ except ImportError:
 
 import numpy as np
 import torch
-from datasets.utils import Rays, namedtuple_map
+from examples.datasets.utils import Rays, namedtuple_map
 from torch.utils.data._utils.collate import collate, default_collate_fn_map
 
 from nerfacc.estimators.occ_grid import OccGridEstimator
