@@ -284,6 +284,14 @@ def render_image_with_occgrid_test(
         positions = (
             t_origins + t_dirs * (t_starts[:, None] + t_ends[:, None]) / 2.0
         )
+        
+        if positions.shape[0] == 0:
+            print("position is empty")
+            sigma = torch.zeros(0, device=positions.device)
+            color = torch.zeros(0, 3, device=positions.device)
+            # print(color.shape, sigma.shape)
+            return color, sigma
+            
         if timestamps is not None:
             # dnerf
             t = (
