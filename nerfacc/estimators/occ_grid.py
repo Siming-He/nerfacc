@@ -374,11 +374,11 @@ class OccGridEstimator(AbstractEstimator):
     ) -> None:
         """Update the occ field in the EMA way."""
         # sample cells
-        if step < warmup_steps:
-            lvl_indices = self._get_all_cells()
-        else:
-            N = self.cells_per_lvl // 4
-            lvl_indices = self._sample_uniform_and_occupied_cells(N)
+        #if step < warmup_steps:
+        lvl_indices = self._get_all_cells()
+        # else:
+        #     N = self.cells_per_lvl // 4
+        #     lvl_indices = self._sample_uniform_and_occupied_cells(N)
 
         for lvl, indices in enumerate(lvl_indices):
             # infer occupancy: density * step_size
