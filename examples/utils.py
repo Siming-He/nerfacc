@@ -12,7 +12,8 @@ except ImportError:
 
 import numpy as np
 import torch
-from examples.datasets.utils import Rays, namedtuple_map
+
+from datasets.utils import Rays, namedtuple_map
 from torch.utils.data._utils.collate import collate, default_collate_fn_map
 
 from nerfacc.estimators.occ_grid import OccGridEstimator
@@ -23,6 +24,8 @@ from nerfacc.volrend import (
     render_weight_from_density,
     rendering,
 )
+
+from ipdb import set_trace as st
 
 NERF_SYNTHETIC_SCENES = [
     "chair",
@@ -73,9 +76,7 @@ def render_image_with_occgrid(
     if len(rays_shape) == 3:
         height, width, _ = rays_shape
         num_rays = height * width
-        rays = namedtuple_map(
-            lambda r: r.reshape([num_rays] + list(r.shape[2:])), rays
-        )
+        rays = namedtuple_map(lambda r: r.reshape([num_rays] + list(r.shape[2:])), rays)
     else:
         num_rays, _ = rays_shape
 
@@ -99,6 +100,7 @@ def render_image_with_occgrid(
         t_origins = chunk_rays.origins[ray_indices]
         t_dirs = chunk_rays.viewdirs[ray_indices]
         positions = t_origins + t_dirs * (t_starts + t_ends)[:, None] / 2.0
+        # st()
         if timestamps is not None:
             # dnerf
             t = (
@@ -112,11 +114,7 @@ def render_image_with_occgrid(
         return rgbs, sigmas.squeeze(-1)
 
     results = []
-    chunk = (
-        torch.iinfo(torch.int32).max
-        if radiance_field.training
-        else test_chunk_size
-    )
+    chunk = torch.iinfo(torch.int32).max if radiance_field.training else test_chunk_size
     for i in range(0, num_rays, chunk):
         chunk_rays = namedtuple_map(lambda r: r[i : i + chunk], rays)
         ray_indices, t_starts, t_ends = estimator.sampling(
@@ -176,9 +174,7 @@ def render_image_with_propnet(
     if len(rays_shape) == 3:
         height, width, _ = rays_shape
         num_rays = height * width
-        rays = namedtuple_map(
-            lambda r: r.reshape([num_rays] + list(r.shape[2:])), rays
-        )
+        rays = namedtuple_map(lambda r: r.reshape([num_rays] + list(r.shape[2:])), rays)
     else:
         num_rays, _ = rays_shape
 
@@ -203,11 +199,7 @@ def render_image_with_propnet(
         return rgb, sigmas.squeeze(-1)
 
     results = []
-    chunk = (
-        torch.iinfo(torch.int32).max
-        if radiance_field.training
-        else test_chunk_size
-    )
+    chunk = torch.iinfo(torch.int32).max if radiance_field.training else test_chunk_size
     for i in range(0, num_rays, chunk):
         chunk_rays = namedtuple_map(lambda r: r[i : i + chunk], rays)
         t_starts, t_ends = estimator.sampling(
@@ -272,26 +264,22 @@ def render_image_with_occgrid_test(
     if len(rays_shape) == 3:
         height, width, _ = rays_shape
         num_rays = height * width
-        rays = namedtuple_map(
-            lambda r: r.reshape([num_rays] + list(r.shape[2:])), rays
-        )
+        rays = namedtuple_map(lambda r: r.reshape([num_rays] + list(r.shape[2:])), rays)
     else:
         num_rays, _ = rays_shape
 
     def rgb_sigma_fn(t_starts, t_ends, ray_indices):
         t_origins = rays.origins[ray_indices]
         t_dirs = rays.viewdirs[ray_indices]
-        positions = (
-            t_origins + t_dirs * (t_starts[:, None] + t_ends[:, None]) / 2.0
-        )
-        
+        positions = t_origins + t_dirs * (t_starts[:, None] + t_ends[:, None]) / 2.0
+
         if positions.shape[0] == 0:
             print("position is empty")
             sigma = torch.zeros(0, device=positions.device)
             color = torch.zeros(0, 3, device=positions.device)
             # print(color.shape, sigma.shape)
             return color, sigma
-            
+
         if timestamps is not None:
             # dnerf
             t = (
@@ -337,7 +325,6 @@ def render_image_with_occgrid_test(
     opc_thre = 1 - early_stop_eps
 
     while iter_samples < max_samples:
-
         n_alive = ray_mask.sum().item()
         if n_alive == 0:
             break
