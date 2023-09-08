@@ -7,8 +7,11 @@ from typing import Callable, Dict, Optional, Tuple
 import torch
 from torch import Tensor
 
-from .pack import pack_info
-from .scan import exclusive_prod, exclusive_sum
+import sys
+
+sys.path.append("perception/nerfacc/nerfacc")
+from pack import pack_info
+from scan import exclusive_prod, exclusive_sum
 
 
 def rendering(

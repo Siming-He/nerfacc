@@ -6,12 +6,13 @@ from typing import Optional
 import torch
 from torch import Tensor
 
-from . import cuda as _C
+import sys
+
+sys.path.append("perception/nerfacc")
+from nerfacc import cuda as _C
 
 
-def inclusive_sum(
-    inputs: Tensor, packed_info: Optional[Tensor] = None
-) -> Tensor:
+def inclusive_sum(inputs: Tensor, packed_info: Optional[Tensor] = None) -> Tensor:
     """Inclusive Sum that supports flattened tensor.
 
     This function is equivalent to `torch.cumsum(inputs, dim=-1)`, but allows
@@ -53,9 +54,7 @@ def inclusive_sum(
     return outputs
 
 
-def exclusive_sum(
-    inputs: Tensor, packed_info: Optional[Tensor] = None
-) -> Tensor:
+def exclusive_sum(inputs: Tensor, packed_info: Optional[Tensor] = None) -> Tensor:
     """Exclusive Sum that supports flattened tensor.
 
     Similar to :func:`nerfacc.inclusive_sum`, but computes the exclusive sum.
@@ -84,9 +83,7 @@ def exclusive_sum(
     if packed_info is None:
         # Batched exclusive sum on the last dimension.
         outputs = torch.cumsum(
-            torch.cat(
-                [torch.zeros_like(inputs[..., :1]), inputs[..., :-1]], dim=-1
-            ),
+            torch.cat([torch.zeros_like(inputs[..., :1]), inputs[..., :-1]], dim=-1),
             dim=-1,
         )
     else:
@@ -100,9 +97,7 @@ def exclusive_sum(
     return outputs
 
 
-def inclusive_prod(
-    inputs: Tensor, packed_info: Optional[Tensor] = None
-) -> Tensor:
+def inclusive_prod(inputs: Tensor, packed_info: Optional[Tensor] = None) -> Tensor:
     """Inclusive Product that supports flattened tensor.
 
     This function is equivalent to `torch.cumprod(inputs, dim=-1)`, but allows
@@ -144,9 +139,7 @@ def inclusive_prod(
     return outputs
 
 
-def exclusive_prod(
-    inputs: Tensor, packed_info: Optional[Tensor] = None
-) -> Tensor:
+def exclusive_prod(inputs: Tensor, packed_info: Optional[Tensor] = None) -> Tensor:
     """Exclusive Product that supports flattened tensor.
 
     Similar to :func:`nerfacc.inclusive_prod`, but computes the exclusive product.
@@ -175,9 +168,7 @@ def exclusive_prod(
     """
     if packed_info is None:
         outputs = torch.cumprod(
-            torch.cat(
-                [torch.ones_like(inputs[..., :1]), inputs[..., :-1]], dim=-1
-            ),
+            torch.cat([torch.ones_like(inputs[..., :1]), inputs[..., :-1]], dim=-1),
             dim=-1,
         )
     else:
@@ -194,9 +185,7 @@ class _InclusiveSum(torch.autograd.Function):
         chunk_starts = chunk_starts.contiguous()
         chunk_cnts = chunk_cnts.contiguous()
         inputs = inputs.contiguous()
-        outputs = _C.inclusive_sum(
-            chunk_starts, chunk_cnts, inputs, normalize, False
-        )
+        outputs = _C.inclusive_sum(chunk_starts, chunk_cnts, inputs, normalize, False)
         if ctx.needs_input_grad[2]:
             ctx.normalize = normalize
             ctx.save_for_backward(chunk_starts, chunk_cnts)
@@ -222,9 +211,7 @@ class _ExclusiveSum(torch.autograd.Function):
         chunk_starts = chunk_starts.contiguous()
         chunk_cnts = chunk_cnts.contiguous()
         inputs = inputs.contiguous()
-        outputs = _C.exclusive_sum(
-            chunk_starts, chunk_cnts, inputs, normalize, False
-        )
+        outputs = _C.exclusive_sum(chunk_starts, chunk_cnts, inputs, normalize, False)
         if ctx.needs_input_grad[2]:
             ctx.normalize = normalize
             ctx.save_for_backward(chunk_starts, chunk_cnts)
