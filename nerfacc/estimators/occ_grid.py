@@ -10,6 +10,8 @@ from ..volrend import (
 )
 from .base import AbstractEstimator
 
+from ipdb import set_trace as st
+
 
 class OccGridEstimator(AbstractEstimator):
     """Occupancy grid transmittance estimator for spatial skipping.
@@ -66,18 +68,14 @@ class OccGridEstimator(AbstractEstimator):
         # Buffers
         self.register_buffer("resolution", resolution)  # [3]
         self.register_buffer("aabbs", aabbs)  # [n_aabbs, 6]
-        self.register_buffer(
-            "occs", torch.zeros(self.levels * self.cells_per_lvl)
-        )
+        self.register_buffer("occs", torch.zeros(self.levels * self.cells_per_lvl))
         self.register_buffer(
             "binaries",
             torch.zeros([levels] + resolution.tolist(), dtype=torch.bool),
         )
 
         # Grid coords & indices
-        grid_coords = _meshgrid3d(resolution).reshape(
-            self.cells_per_lvl, self.DIM
-        )
+        grid_coords = _meshgrid3d(resolution).reshape(self.cells_per_lvl, self.DIM)
         self.register_buffer("grid_coords", grid_coords, persistent=False)
         grid_indices = torch.arange(self.cells_per_lvl)
         self.register_buffer("grid_indices", grid_indices, persistent=False)
@@ -227,8 +225,8 @@ class OccGridEstimator(AbstractEstimator):
         occ_eval_fn: Callable,
         occ_thre: float = 1e-2,
         ema_decay: float = 0.95,
-        warmup_steps: int = 256,
-        n: int = 16,
+        warmup_steps: int = 1000,
+        n: int = 10,
     ) -> None:
         """Update the estimator every n steps during training.
 
@@ -281,9 +279,7 @@ class OccGridEstimator(AbstractEstimator):
             chunk: The chunk size to split the cells (to avoid OOM)
         """
         assert K.dim() == 3 and K.shape[1:] == (3, 3)
-        assert c2w.dim() == 3 and (
-            c2w.shape[1:] == (3, 4) or c2w.shape[1:] == (4, 4)
-        )
+        assert c2w.dim() == 3 and (c2w.shape[1:] == (3, 4) or c2w.shape[1:] == (4, 4))
         assert K.shape[0] == c2w.shape[0] or K.shape[0] == 1
 
         N_cams = c2w.shape[0]
@@ -312,15 +308,11 @@ class OccGridEstimator(AbstractEstimator):
                     & (uv[:, 1] >= 0)
                     & (uv[:, 1] < height)
                 )
-                covered_by_cam = (
-                    uvd[:, 2] >= near_plane
-                ) & in_image  # (N_cams, chunk)
+                covered_by_cam = (uvd[:, 2] >= near_plane) & in_image  # (N_cams, chunk)
                 # if the cell is visible by at least one camera
                 count = covered_by_cam.sum(0) / N_cams
 
-                too_near_to_cam = (
-                    uvd[:, 2] < near_plane
-                ) & in_image  # (N, chunk)
+                too_near_to_cam = (uvd[:, 2] < near_plane) & in_image  # (N, chunk)
                 # if the cell is too close (in front) to any camera
                 too_near_to_any_cam = too_near_to_cam.any(0)
                 # a valid cell should be visible by at least one camera and not too close to any camera
@@ -374,11 +366,11 @@ class OccGridEstimator(AbstractEstimator):
     ) -> None:
         """Update the occ field in the EMA way."""
         # sample cells
-        #if step < warmup_steps:
+        # if step < warmup_steps:
         lvl_indices = self._get_all_cells()
         # else:
-        #     N = self.cells_per_lvl // 4
-        #     lvl_indices = self._sample_uniform_and_occupied_cells(N)
+        # N = self.cells_per_lvl // 4
+        # lvl_indices = self._sample_uniform_and_occupied_cells(N)
 
         for lvl, indices in enumerate(lvl_indices):
             # infer occupancy: density * step_size
@@ -387,26 +379,42 @@ class OccGridEstimator(AbstractEstimator):
                 grid_coords + torch.rand_like(grid_coords, dtype=torch.float32)
             ) / self.resolution
             # voxel coordinates [0, 1]^3 -> world
-            x = self.aabbs[lvl, :3] + x * (
-                self.aabbs[lvl, 3:] - self.aabbs[lvl, :3]
-            )
+            x = self.aabbs[lvl, :3] + x * (self.aabbs[lvl, 3:] - self.aabbs[lvl, :3])
             occ = occ_eval_fn(x).squeeze(-1)
             # ema update
             cell_ids = lvl * self.cells_per_lvl + indices
-            self.occs[cell_ids] = torch.maximum(
-                self.occs[cell_ids] * ema_decay, occ
-            )
+            self.occs[cell_ids] = torch.maximum(self.occs[cell_ids] * ema_decay, occ)
             # suppose to use scatter max but emperically it is almost the same.
             # self.occs, _ = scatter_max(
             #     occ, indices, dim=0, out=self.occs * ema_decay
             # )
-        thre = torch.clamp(self.occs[self.occs >= 0].mean(), max=occ_thre)
-        self.binaries = (self.occs > thre).view(self.binaries.shape)
+
+        # >= 0.0 ????
+
+        self.update_binary(occ_thre)
+
+        # splited_occs = torch.split(self.occs.contiguous(), 5000)
+        # # st()
+        # thre = 0
+        # for occs in splited_occs:
+        #     thre += torch.sum(occs)
+
+        # thre = torch.clamp(thre, max=occ_thre * self.occs.shape[0])
+        # self.binaries = (
+        #     (self.occs > (thre / self.occs.shape[0]))
+        #     .view(self.binaries.shape)
+        #     .contiguous()
+        # )
+
+    def update_binary(self, occ_thre):
+        try:
+            thre = torch.clamp(self.occs[self.occs >= 0].mean(), max=occ_thre)
+            self.binaries = (self.occs > thre).view(self.binaries.shape)
+        except Exception as e:
+            print("caught error for update binary " + str(e))
 
 
-def _meshgrid3d(
-    res: Tensor, device: Union[torch.device, str] = "cpu"
-) -> Tensor:
+def _meshgrid3d(res: Tensor, device: Union[torch.device, str] = "cpu") -> Tensor:
     """Create 3D grid coordinates."""
     assert len(res) == 3
     res = res.tolist()
