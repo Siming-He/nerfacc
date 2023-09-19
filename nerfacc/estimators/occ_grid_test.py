@@ -12,6 +12,8 @@ from .base import AbstractEstimator
 
 from ipdb import set_trace as st
 
+import time
+
 
 class OccGridEstimator(AbstractEstimator):
     """Occupancy grid transmittance estimator for spatial skipping.
@@ -99,7 +101,6 @@ class OccGridEstimator(AbstractEstimator):
         alpha_thre: float = 0.0,
         stratified: bool = False,
         cone_angle: float = 0.0,
-        depth: Optional[Tensor] = None,
     ) -> Tuple[Tensor, Tensor, Tensor]:
         """Sampling with spatial skipping.
 
@@ -160,7 +161,6 @@ class OccGridEstimator(AbstractEstimator):
 
         if stratified:
             near_planes += torch.rand_like(near_planes) * render_step_size
-
         intervals, samples, _ = traverse_grids(
             rays_o,
             rays_d,
@@ -175,27 +175,6 @@ class OccGridEstimator(AbstractEstimator):
         t_ends = intervals.vals[intervals.is_right]
         ray_indices = samples.ray_indices
         packed_info = samples.packed_info
-
-        """
-        # based on depth, we only keep interval in front of wall/obstacle
-        in_range_idx = t_starts <= (depth[ray_indices])
-        t_starts = t_starts[in_range_idx]
-        t_ends = t_ends[in_range_idx]
-        ray_indices = ray_indices[in_range_idx]
-        count = torch.unique(ray_indices, sorted=True, return_counts=True)[1]
-        start_idx = torch.hstack(
-            (
-                torch.tensor([0]).to(t_starts.device),
-                torch.cumsum(
-                    torch.unique(ray_indices, sorted=True, return_counts=True)[1], dim=0
-                )[:-1],
-            )
-        )
-        if count.shape[0] == 0:
-            start_idx = torch.tensor([]).to(t_starts.device)
-
-        packed_info = torch.vstack((start_idx, count)).T
-        """
 
         # skip invisible space
         if (alpha_thre > 0.0 or early_stop_eps > 0.0) and (
@@ -239,7 +218,6 @@ class OccGridEstimator(AbstractEstimator):
                 t_starts[masks],
                 t_ends[masks],
             )
-
         return ray_indices, t_starts, t_ends
 
     @torch.no_grad()
@@ -249,8 +227,8 @@ class OccGridEstimator(AbstractEstimator):
         occ_eval_fn: Callable,
         occ_thre: float = 1e-2,
         ema_decay: float = 0.95,
-        warmup_steps: int = 256,
-        n: int = 16,
+        warmup_steps: int = 1000,
+        n: int = 100,
     ) -> None:
         """Update the estimator every n steps during training.
 
@@ -276,7 +254,7 @@ class OccGridEstimator(AbstractEstimator):
                 step=step,
                 occ_eval_fn=occ_eval_fn,
                 occ_thre=occ_thre,
-                ema_decay=ema_decay,  # ema_decay,
+                ema_decay=ema_decay,
                 warmup_steps=warmup_steps,
             )
 
@@ -385,18 +363,17 @@ class OccGridEstimator(AbstractEstimator):
         step: int,
         occ_eval_fn: Callable,
         occ_thre: float = 0.01,
-        ema_decay: float = 0.95,  # 0.95,
+        ema_decay: float = 0.95,
         warmup_steps: int = 256,
     ) -> None:
         """Update the occ field in the EMA way."""
         # sample cells
-        if step < warmup_steps:
-            lvl_indices = self._get_all_cells()
-        else:
-            N = self.cells_per_lvl // 4
-            lvl_indices = self._sample_uniform_and_occupied_cells(N)
-
-        # print("is there nan? " + str(torch.sum(torch.isnan(self.occs))))
+        # if step < warmup_steps:
+        # lvl_indices = self._get_all_cells()
+        # else:
+        print("updating")
+        N = self.cells_per_lvl // 4
+        lvl_indices = self._sample_uniform_and_occupied_cells(N)
 
         for lvl, indices in enumerate(lvl_indices):
             # infer occupancy: density * step_size
@@ -406,40 +383,55 @@ class OccGridEstimator(AbstractEstimator):
             ) / self.resolution
             # voxel coordinates [0, 1]^3 -> world
             x = self.aabbs[lvl, :3] + x * (self.aabbs[lvl, 3:] - self.aabbs[lvl, :3])
-
-            occs_backup = torch.clone(self.occs)
-
             occ = occ_eval_fn(x).squeeze(-1)
-            # print("occ nan cound: " + str(torch.sum(torch.isnan(occ))))
-
             # ema update
             cell_ids = lvl * self.cells_per_lvl + indices
-
-            # print(
-            #     "occs nan count: "
-            #     + str(torch.sum(torch.isnan(self.occs[cell_ids] * ema_decay)))
-            # )
-            # print(ema_decay)
-            # print(
-            #     "is there nan after decay? "
-            #     + str(torch.sum(torch.isnan(self.occs[cell_ids] * ema_decay)))
-            # )
-            # print("is there nan in occ? " + str(torch.sum(torch.isnan(occ))))
             self.occs[cell_ids] = torch.maximum(self.occs[cell_ids] * ema_decay, occ)
             # suppose to use scatter max but emperically it is almost the same.
             # self.occs, _ = scatter_max(
             #     occ, indices, dim=0, out=self.occs * ema_decay
             # )
 
-        # print("nan count: " + str(torch.sum(torch.isnan(self.occs))))
-        count_nan = torch.sum(torch.isnan(self.occs))
-        if count_nan != 0:
-            # st()
-            print("replace nan: " + str(count_nan))
-            self.occs[torch.isnan(self.occs)] = occs_backup[torch.isnan(self.occs)]
-            # self.occs = torch.nan_to_num(self.occs, nan=1.1e-2)
-        thre = torch.clamp(self.occs[self.occs >= 0].mean(), max=occ_thre)
-        self.binaries = (self.occs > thre).view(self.binaries.shape)
+        # >= 0.0 ????
+
+        self.update_binary(occ_thre)
+
+        # splited_occs = torch.split(self.occs.contiguous(), 5000)
+        # # st()
+        # thre = 0
+        # for occs in splited_occs:
+        #     thre += torch.sum(occs)
+
+        # thre = torch.clamp(thre, max=occ_thre * self.occs.shape[0])
+        # self.binaries = (
+        #     (self.occs > (thre / self.occs.shape[0]))
+        #     .view(self.binaries.shape)
+        #     .contiguous()
+        # )
+
+    def update_binary(self, occ_thre):
+        try:
+            # thre = torch.clamp(self.occs[self.occs >= 0.0].mean(), max=occ_thre)
+            # self.binaries = (self.occs > thre).view(self.binaries.shape).contiguous()
+            splited_occs = torch.split(self.occs.contiguous(), 5000)
+            thre = 0
+            for occs in splited_occs:
+                thre += torch.sum(occs)
+
+            thre = torch.clamp(thre, max=occ_thre * self.occs.shape[0])
+            self.binaries = (
+                (self.occs > (thre / self.occs.shape[0]))
+                .view(self.binaries.shape)
+                .contiguous()
+            )
+            self.binaries_copy = torch.clone(self.binaries).contiguous()
+            self.occs_copy = torch.clone(self.occs).contiguous()
+
+        except Exception as e:
+            time.sleep(1)
+            self.binaries = torch.clone(self.binaries_copy).contiguous()
+            self.occs = torch.clone(self.occs_copy).contiguous()
+            print("caught error for update binary " + str(e))
 
 
 def _meshgrid3d(res: Tensor, device: Union[torch.device, str] = "cpu") -> Tensor:
