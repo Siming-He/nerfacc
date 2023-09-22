@@ -431,12 +431,12 @@ class OccGridEstimator(AbstractEstimator):
             #     occ, indices, dim=0, out=self.occs * ema_decay
             # )
 
-        # print("nan count: " + str(torch.sum(torch.isnan(self.occs))))
-        count_nan = torch.sum(torch.isnan(self.occs))
-        if count_nan != 0:
-            # st()
-            print("replace nan: " + str(count_nan))
-            self.occs[torch.isnan(self.occs)] = occs_backup[torch.isnan(self.occs)]
+            # print("nan count: " + str(torch.sum(torch.isnan(self.occs))))
+            count_nan = torch.sum(torch.isnan(self.occs))
+            if count_nan != 0:
+                # st()
+                print("replace nan: " + str(count_nan))
+                self.occs[torch.isnan(self.occs)] = occs_backup[torch.isnan(self.occs)]
             # self.occs = torch.nan_to_num(self.occs, nan=1.1e-2)
         thre = torch.clamp(self.occs[self.occs >= 0].mean(), max=occ_thre)
         self.binaries = (self.occs > thre).view(self.binaries.shape)
